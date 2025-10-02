@@ -293,15 +293,12 @@ def generate_and_test(nii_path, name, pars,  voxsize=3, shape = (64,64,36), size
     res = mcflt.run()  
     print('...done')
 
-    #
-    mcflt_pars = params_from_affines(fn, centre = (0,0,0))
-    mcflt_pars = pd.DataFrame(mcflt_pars, columns=['rx','ry','rz','tx','ty','tz'])
-    print(mcflt_pars)
+    # Read in the MCFLIRT matrices and convert to parameters
+    mcflt_pars_from_affines = params_from_affines(fn, centre = (0,0,0))
+    mcflt_pars_from_affines = pd.DataFrame(mcflt_pars_from_affines, columns=['rx','ry','rz','tx','ty','tz'])
 
-    # Read in motion parameters
-    # mcflt_pars = pd.read_csv(fn + 'mcf.nii.gz.par', sep='\s+', header=None, names = ['rx','ry','rz','tx','ty','tz'])
 
-    fig, ax = plt.subplots(nrows=2, ncols=3)
+    fig, ax = plt.subplots(nrows=2, ncols=5, figsize=(20,8))
     tlim=20
     rlim=0.45
     ax[0][0].plot(np.array(pars)[:,:3]-pars[0][:3])
@@ -310,56 +307,64 @@ def generate_and_test(nii_path, name, pars,  voxsize=3, shape = (64,64,36), size
     ax[1][0].plot(voxsize*(np.array(pars)[:,3:]-pars[0][3:]))
     ax[1][0].set_title(f'{name}_true_trans')
     ax[1][0].set_ylim(-tlim,tlim)
-    ax[0][1].plot(mcflt_pars[['rx','ry','rz']])
-    ax[0][1].set_title(f'{name}_mcflirt_rots')
+    ax[0][1].plot(mcflt_pars_from_affines[['rx','ry','rz']])
+    ax[0][1].set_title(f'{name}_mcflirt_rots from affines')
     ax[0][1].set_ylim(-rlim,rlim)
     plt.legend(['rx','ry','rz'])
-    ax[1][1].plot(mcflt_pars[['tx','ty','tz']])
-    ax[1][1].set_title(f'{name}_mcflirt_trans')
+    ax[1][1].plot(mcflt_pars_from_affines[['tx','ty','tz']])
+    ax[1][1].set_title(f'{name}_mcflirt_trans from affines')
     ax[1][1].set_ylim(-tlim,tlim)
     plt.legend(['tx','ty','tz'])
 
-
-    # FSL documentation seems divided on what is the origin for rotation
-    #  This post suggests it is (0,0,0) https://www.jiscmail.ac.uk/cgi-bin/webadmin?A2=FSL;e20bbf16.1609#:~:text=Dear%20Mahmoud%2C,be%20(possibly%20very)%20different.
-    #  This is voxel coord (0,0,0) as changing the origin (in the mat file) doesn't make any difference
-    #  last FAQ here, for FLIRT - also true for MCFLIRT? https://web.mit.edu/fsl_v5.0.10/fsl/doc/wiki/FLIRT(2f)FAQ.html
-
-    #  This documentation suggests it is COM
-    #    https://www.fmrib.ox.ac.uk/datasets/techrep/tr02mj1/tr02mj1/node21.html
-    #    also in that FAQ from above it says the parameters us COM
+    # Origin of rotations affects values of translations but not rotations
+    # For MCFLIRT/FLIRT affines, origin is voxel (0,0,0) of (clipped) volume
+    # Shift to centre of full volume for consistency
+    p_from_affine = (mat @ np.array([0,0,clipz[0],1]))[:3] 
+    p_to_affine = (mat @ (np.concatenate((np.array(shape)/2,[1])).T))[:3]
+    mcflt_pars_from_affines_adusted= adjust_pivot_df_shared_pivots(mcflt_pars_from_affines, p_from_affine, p_to_affine)
     
-    origin_from = '0' # 0 or 'com' or 'centre'
-
-    # Calc centre of mass of mean used as pivot
-
-    
-    if origin_from == 'com':
-        results = ImageStats(in_file=fn+'.nii.gz', op_string='-c').run()
-        p_from=results.outputs.out_stat
-    elif origin_from == 'center':
-        image_centre_voxels =  np.array(shape)/2
-        image_centre_voxels[2] = (clipz[0] + clipz[1])/2
-        print(f'Image center voxels {image_centre_voxels}')
-        p_from = (mat @ (np.concatenate((image_centre_voxels, [1])).T))[:3]
-    elif origin_from == '0':
-        p_from = (mat @ np.array([0,0,clipz[0],1]))[:3]
-
-    print(f'Using COM? {origin_from}, gives centre of {p_from}')
-    
-    # Shift to centre of mass of full volume
-    p_to = (mat @ (np.concatenate((np.array(shape)/2,[1])).T))[:3]
-    print(f'Desired full volume COM is {p_to}')
-    mcflt_pars = adjust_pivot_df_shared_pivots(mcflt_pars, p_from, p_to)
-    
-    ax[0][2].plot(mcflt_pars[['rx','ry','rz']])
-    ax[0][2].set_title(f'{name}_mcflirt_rots adjusted')
+    ax[0][2].plot(mcflt_pars_from_affines_adusted[['rx','ry','rz']])
+    ax[0][2].set_title(f'{name}_mcflirt_rot from affines adjusted')
     ax[0][2].set_ylim(-rlim,rlim)
     plt.legend(['rx','ry','rz'])
-    ax[1][2].plot(mcflt_pars[['t_to_x','t_to_y','t_to_z']])
-    ax[1][2].set_title(f'{name}_mcflirt_trans_adusted')
+    ax[1][2].plot(mcflt_pars_from_affines_adusted[['t_to_x','t_to_y','t_to_z']])
+    ax[1][2].set_title(f'{name}_mcflirt_trans from affines adusted')
     ax[1][2].set_ylim(-tlim,tlim)
     plt.legend(['t_to_x','t_to_y','t_to_z'])
+
+    # Now repeat but using the mcflirt .par file
+    # For MCFLIRT .pars, origin is voxel com of reference volume
+    # Shift to centre of full volume for consistency
+    mcflt_pars = pd.read_csv(fn + 'mcf.nii.gz.par', sep='\s+', header=None, names = ['rx','ry','rz','tx','ty','tz'])
+
+    mcflt_pars[['rx']] = -mcflt_pars[['rx']] # flip x rot to match FSL convention
+
+    ax[0][3].plot(mcflt_pars[['rx','ry','rz']])
+    ax[0][3].set_title(f'{name}_mcflirt_rots')
+    ax[0][3].set_ylim(-rlim,rlim)
+    plt.legend(['rx','ry','rz'])
+    ax[1][3].plot(mcflt_pars[['tx','ty','tz']])
+    ax[1][3].set_title(f'{name}_mcflirt_trans')
+    ax[1][3].set_ylim(-tlim,tlim)
+    plt.legend(['tx','ty','tz'])
+
+    # Calc centre of mass of mean used as pivot
+    results = ImageStats(in_file=fn+'.nii.gz', split_4d=True, op_string='-C').run()
+    p_from_voxels=results.outputs.out_stat[0]
+    p_from_voxels[2] += clipz[0] # adjust for clipped slices
+    p_from = (mat @ np.concatenate((p_from_voxels,[1])).T)[:3]
+    p_to = (mat @ (np.concatenate((np.array(shape)/2,[1])).T))[:3]
+    mcflt_pars_adusted= adjust_pivot_df_shared_pivots(mcflt_pars, p_from, p_to)
+
+    ax[0][4].plot(mcflt_pars_adusted[['rx','ry','rz']])
+    ax[0][4].set_title(f'{name}_mcflirt_rot adjusted')
+    ax[0][4].set_ylim(-rlim,rlim)
+    plt.legend(['rx','ry','rz'])
+    ax[1][4].plot(mcflt_pars_adusted[['t_to_x','t_to_y','t_to_z']])
+    ax[1][4].set_title(f'{name}_mcflirt_trans adusted')
+    ax[1][4].set_ylim(-tlim,tlim)
+    plt.legend(['t_to_x','t_to_y','t_to_z'])
+
     fig.savefig(f'mcflirt_{name}.png')
 
 # # --------- Example & sanity check ---------

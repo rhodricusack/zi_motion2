@@ -267,7 +267,7 @@ def params_from_affines(name, centre=None):
         ind+=1
     return mcflirt_params_from_affines(affines, center=centre, degrees=False)
 
-def generate_and_test(nii_path, name, pars,  voxsize=3, shape = (64,64,36), sizes = (20.0, 25.0, 17.0), clipz=None):
+def generate_and_test(nii_path, name, pars,  ref_vol=0, voxsize=3, shape = (64,64,36), sizes = (20.0, 25.0, 17.0), clipz=None):
     # Generate ellipse data with motion parameters described in pars
     fn = os.path.join(nii_path,name)
     nvol = len(pars)
@@ -285,7 +285,7 @@ def generate_and_test(nii_path, name, pars,  voxsize=3, shape = (64,64,36), size
     mcflt = fsl.MCFLIRT()
     mcflt.inputs.in_file = fn + '.nii.gz'
     mcflt.inputs.out_file = fn + 'mcf.nii.gz'
-    mcflt.inputs.ref_vol = 0 # ref vol to first one - makes plotting easier!
+    mcflt.inputs.ref_vol = ref_vol
     mcflt.inputs.save_plots = True
     mcflt.inputs.save_mats = True
     print(mcflt.cmdline)
@@ -348,12 +348,15 @@ def generate_and_test(nii_path, name, pars,  voxsize=3, shape = (64,64,36), size
     ax[1][3].set_ylim(-tlim,tlim)
     plt.legend(['tx','ty','tz'])
 
-    # Calc centre of mass of mean used as pivot
+    # Calc centre of mass of mean used as pivot by MCFLIRT
     results = ImageStats(in_file=fn+'.nii.gz', split_4d=True, op_string='-C').run()
-    p_from_voxels=results.outputs.out_stat[0]
+    p_from_voxels=results.outputs.out_stat[ref_vol]
     p_from_voxels[2] += clipz[0] # adjust for clipped slices
     p_from = (mat @ np.concatenate((p_from_voxels,[1])).T)[:3]
+
+    # Shift to centre of full volume for consistency
     p_to = (mat @ (np.concatenate((np.array(shape)/2,[1])).T))[:3]
+
     mcflt_pars_adusted= adjust_pivot_df_shared_pivots(mcflt_pars, p_from, p_to)
 
     ax[0][4].plot(mcflt_pars_adusted[['rx','ry','rz']])
@@ -367,33 +370,6 @@ def generate_and_test(nii_path, name, pars,  voxsize=3, shape = (64,64,36), size
 
     fig.savefig(f'mcflirt_{name}.png')
 
-# # --------- Example & sanity check ---------
-# if __name__ == "__main__":
-#     # Original representation: rotate about p_from, then translate by t_from
-#     p_from = np.array([10.0, -2.0, 5.0])
-#     p_to   = np.array([0.0, 0.0, 0.0])   # move pivot to the global origin for demonstration
-#     rot    = (0.2, 0.4, 0.8)             # rx, ry, rz (radians)
-#     t_from = np.array([3.0, -1.0, 2.0])
-
-#     t_to, rot_to = convert_pivot(t_from, rot, p_from, p_to)
-
-#     # Verify the two parameterizations produce the same affine transform:
-#     R = rotation_matrix_xyz(*rot)
-#     # Transform defined about p_from:
-#     # x' = R (x - p_from) + p_from + t_from = R x + (p_from - R p_from + t_from)
-#     A_from = R
-#     b_from = p_from - R @ p_from + t_from
-
-#     # Transform defined about p_to:
-#     # x' = R (x - p_to) + p_to + t_to = R x + (p_to - R p_to + t_to)
-#     A_to = R
-#     b_to = p_to - R @ p_to + t_to
-
-#     # They should match
-#     print("||A_from - A_to||:", np.linalg.norm(A_from - A_to))
-#     print("||b_from - b_to||:", np.linalg.norm(b_from - b_to))
-
-# --- Example usage ---
 if __name__ == "__main__":
     # Define your parameters
     
@@ -405,7 +381,7 @@ if __name__ == "__main__":
     os.mkdir(nii_path)
 
     nvol = 20 # how many volumes in time series
-    cz = 18 # centre used for ellipse
+    cz = 18 # centre used for ellipsoid
     clipz = [0,16] # chunk of bottom slices
     clipz2 = [20,36] # chunk of upper slices
     

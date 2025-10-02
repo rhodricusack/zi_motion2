@@ -86,15 +86,6 @@ def adjust_pivot_df_shared_pivots(df, p_from, p_to, *, degrees=False,
 
     return df
 
-# -------- Example --------
-# df = pd.DataFrame({
-#     "rx":[0.2, 0.0], "ry":[0.4, 0.1], "rz":[0.8, 0.3],
-#     "tx":[3.0,-1.0], "ty":[-1.0,2.0], "tz":[2.0,0.5],
-# })
-# p_from = np.array([10.0, -2.0, 5.0])
-# p_to   = np.array([0.0,  0.0,  0.0])
-# adjust_pivot_df_shared_pivots(df, p_from, p_to)
-# print(df[["tx","ty","tz","t_to_x","t_to_y","t_to_z"]])
 
 def ellipsoid_volume(
     shape=(32, 32, 64),
@@ -332,21 +323,14 @@ def generate_and_test(nii_path, name, pars,  ref_vol=0, voxsize=3, shape = (64,6
     ax[1][2].set_ylim(-tlim,tlim)
     plt.legend(['t_to_x','t_to_y','t_to_z'])
 
+
     # Now repeat but using the mcflirt .par file
     # For MCFLIRT .pars, origin is voxel com of reference volume
     # Shift to centre of full volume for consistency
     mcflt_pars = pd.read_csv(fn + 'mcf.nii.gz.par', sep='\s+', header=None, names = ['rx','ry','rz','tx','ty','tz'])
 
-    mcflt_pars[['rx']] = -mcflt_pars[['rx']] # flip x rot to match FSL convention
-
-    ax[0][3].plot(mcflt_pars[['rx','ry','rz']])
-    ax[0][3].set_title(f'{name}_mcflirt_rots')
-    ax[0][3].set_ylim(-rlim,rlim)
-    plt.legend(['rx','ry','rz'])
-    ax[1][3].plot(mcflt_pars[['tx','ty','tz']])
-    ax[1][3].set_title(f'{name}_mcflirt_trans')
-    ax[1][3].set_ylim(-tlim,tlim)
-    plt.legend(['tx','ty','tz'])
+    # correct for FSL's different axis conventions
+    mcflt_pars[['rx']] = -mcflt_pars[['rx']] 
 
     # Calc centre of mass of mean used as pivot by MCFLIRT
     results = ImageStats(in_file=fn+'.nii.gz', split_4d=True, op_string='-C').run()
@@ -358,6 +342,17 @@ def generate_and_test(nii_path, name, pars,  ref_vol=0, voxsize=3, shape = (64,6
     p_to = (mat @ (np.concatenate((np.array(shape)/2,[1])).T))[:3]
 
     mcflt_pars_adusted= adjust_pivot_df_shared_pivots(mcflt_pars, p_from, p_to)
+
+
+
+    ax[0][3].plot(mcflt_pars[['rx','ry','rz']])
+    ax[0][3].set_title(f'{name}_mcflirt_rots')
+    ax[0][3].set_ylim(-rlim,rlim)
+    plt.legend(['rx','ry','rz'])
+    ax[1][3].plot(mcflt_pars[['tx','ty','tz']])
+    ax[1][3].set_title(f'{name}_mcflirt_trans')
+    ax[1][3].set_ylim(-tlim,tlim)
+    plt.legend(['tx','ty','tz'])
 
     ax[0][4].plot(mcflt_pars_adusted[['rx','ry','rz']])
     ax[0][4].set_title(f'{name}_mcflirt_rot adjusted')
